@@ -3,10 +3,14 @@ import Foundation
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private let runtimeLog = NSString(string: "~/Library/Application Support/UniversalControlWatchdog/logs/universal-control-watchdog.log").expandingTildeInPath
+    private let runtimeDir = NSString(string: "~/Library/Application Support/UniversalControlWatchdog").expandingTildeInPath
+    private lazy var runtimeLog = "\(runtimeDir)/logs/universal-control-watchdog.log"
+    private lazy var runtimeWatchdog = "\(runtimeDir)/universal-control-watchdog.zsh"
+    private let watchdogLabel = "com.local.universal-control-watchdog"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        installBundledWatchdog(showNotification: false)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
@@ -21,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Restart Universal Control", action: #selector(restartUniversalControl), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Run Watchdog Check", action: #selector(runWatchdog), keyEquivalent: "w"))
+        menu.addItem(NSMenuItem(title: "Install/Repair Watchdog", action: #selector(installWatchdogFromMenu), keyEquivalent: "i"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Open Watchdog Log", action: #selector(openWatchdogLog), keyEquivalent: "l"))
         menu.addItem(NSMenuItem(title: "Open Log Folder", action: #selector(openLogFolder), keyEquivalent: ""))
@@ -53,8 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func runWatchdog() {
         setIconBusy(true)
         DispatchQueue.global(qos: .userInitiated).async {
-            let script = NSString(string: "~/Library/Application Support/UniversalControlWatchdog/universal-control-watchdog.zsh").expandingTildeInPath
-            let output = self.runShell("/bin/zsh \(Self.shellQuote(script))")
+            let output = self.runShell("/bin/zsh \(Self.shellQuote(self.runtimeWatchdog))")
 
             DispatchQueue.main.async {
                 self.setIconBusy(false)
@@ -65,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    @objc private func installWatchdogFromMenu() {
+        installBundledWatchdog(showNotification: true)
     }
 
     @objc private func openWatchdogLog() {
@@ -97,6 +105,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = runProcess("/usr/bin/osascript", ["-e", script])
     }
 
+    private func installBundledWatchdog(showNotification: Bool) {
+        DispatchQueue.global(qos: .utility).async {
+            let result = self.installBundledWatchdogSync()
+            if showNotification {
+                DispatchQueue.main.async {
+                    if result.status == 0 {
+                        self.notify(title: "Watchdog installed", body: "Background monitoring is active.")
+                    } else {
+                        self.notify(title: "Watchdog install failed", body: result.output.isEmpty ? "Exit code \(result.status)." : result.output)
+                    }
+                }
+            }
+        }
+    }
+
+    private func installBundledWatchdogSync() -> (status: Int32, output: String) {
+        guard let bundledScript = Bundle.main.url(forResource: "universal-control-watchdog", withExtension: "zsh") else {
+            return (2, "Bundled watchdog script is missing.")
+        }
+
+        let fm = FileManager.default
+        let logsDir = "\(runtimeDir)/logs"
+        let launchAgentsDir = NSString(string: "~/Library/LaunchAgents").expandingTildeInPath
+        let plistPath = "\(launchAgentsDir)/\(watchdogLabel).plist"
+
+        do {
+            try fm.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
+            try fm.createDirectory(atPath: launchAgentsDir, withIntermediateDirectories: true)
+
+            if fm.fileExists(atPath: runtimeWatchdog) {
+                try fm.removeItem(atPath: runtimeWatchdog)
+            }
+            try fm.copyItem(at: bundledScript, to: URL(fileURLWithPath: runtimeWatchdog))
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runtimeWatchdog)
+
+            let plist = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+              "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>Label</key>
+              <string>\(watchdogLabel)</string>
+              <key>ProgramArguments</key>
+              <array>
+                <string>/bin/zsh</string>
+                <string>\(Self.xmlEscape(runtimeWatchdog))</string>
+              </array>
+              <key>StartInterval</key>
+              <integer>60</integer>
+              <key>RunAtLoad</key>
+              <true/>
+              <key>StandardOutPath</key>
+              <string>\(Self.xmlEscape(logsDir))/universal-control-watchdog.stdout.log</string>
+              <key>StandardErrorPath</key>
+              <string>\(Self.xmlEscape(logsDir))/universal-control-watchdog.stderr.log</string>
+            </dict>
+            </plist>
+            """
+            try plist.write(toFile: plistPath, atomically: true, encoding: .utf8)
+
+            _ = runProcess("/bin/launchctl", ["bootout", "gui/\(getuid())", plistPath])
+            let bootstrap = runProcess("/bin/launchctl", ["bootstrap", "gui/\(getuid())", plistPath])
+            if bootstrap.status != 0 && !bootstrap.output.contains("already bootstrapped") {
+                return bootstrap
+            }
+            _ = runProcess("/bin/launchctl", ["enable", "gui/\(getuid())/\(watchdogLabel)"])
+            return runProcess("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(watchdogLabel)"])
+        } catch {
+            return (1, error.localizedDescription)
+        }
+    }
+
     private func runShell(_ command: String) -> (status: Int32, output: String) {
         runProcess("/bin/zsh", ["-lc", command])
     }
@@ -125,6 +206,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func appleScriptQuote(_ value: String) -> String {
         "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    private static func xmlEscape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 }
 

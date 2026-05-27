@@ -17,6 +17,8 @@ xcrun swiftc "$BASE_DIR/menubar/UniversalControlRestarter.swift" \
   -framework AppKit \
   -o "$MACOS_DIR/UniversalControlRestarter"
 
+cp "$BASE_DIR/scripts/universal-control-watchdog.zsh" "$RESOURCES_DIR/universal-control-watchdog.zsh"
+
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"

@@ -17,7 +17,13 @@ This tool is intentionally local-only. It does not collect telemetry, send netwo
 
 ## Install
 
-Clone the repo, then run:
+For end users, download `Universal-Control-Restarter.zip`, unzip it, move `Universal Control Restarter.app` to `/Applications`, and open it.
+
+On first launch, the app installs or repairs the watchdog LaunchAgent automatically. The circular restart icon appears in the macOS menu bar.
+
+Because this app is not notarized, macOS may show a Gatekeeper warning for downloaded builds. Open it from Finder with right click -> Open the first time.
+
+For source installs, clone the repo, then run:
 
 ```zsh
 zsh scripts/install-universal-control-watchdog.zsh
@@ -42,6 +48,21 @@ Logs are written to:
 ```text
 ~/Library/Application Support/UniversalControlWatchdog/logs/
 ```
+
+## Build a Release App
+
+```zsh
+zsh scripts/build-release.zsh
+```
+
+This creates:
+
+```text
+dist/Universal Control Restarter.app
+dist/Universal-Control-Restarter.zip
+```
+
+The app bundle includes the watchdog script in `Contents/Resources` and uses ad-hoc signing. It is suitable for local sharing, but not notarized for broad public distribution.
 
 ## Usage
 

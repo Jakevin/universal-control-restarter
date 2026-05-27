@@ -5,6 +5,7 @@ logs/
 
 # Local build artifacts
 *.app/
+dist/
 .build/
 DerivedData/
 
