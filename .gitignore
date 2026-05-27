@@ -1,0 +1,16 @@
+.DS_Store
+logs/
+*.log
+*.state
+
+# Local build artifacts
+*.app/
+.build/
+DerivedData/
+
+# Swift / Xcode user state
+*.xcuserstate
+xcuserdata/
+
+# Runtime install output
+UniversalControlWatchdog/
